@@ -18,6 +18,7 @@ Provides an internal endpoint to notify the owner through SMS and/or email when 
 `GET /health`
 
 Response:
+
 ```json
 {
   "status": "ok",
@@ -30,6 +31,7 @@ Response:
 `POST /internal/owner-notify`
 
 Request body:
+
 ```json
 {
   "subject": "Hot Lead",
@@ -40,10 +42,12 @@ Request body:
 ```
 
 Notes:
+
 - `priority` is accepted but currently informational only.
 - `channels` must include one or both of: `sms`, `email`.
 
 Success response:
+
 ```json
 {
   "status": "sent",
@@ -52,6 +56,7 @@ Success response:
 ```
 
 Validation error response (`400`):
+
 ```json
 {
   "error": "Validation failed",
@@ -75,13 +80,15 @@ Create a `.env` file and configure:
 ## Local Development
 
 1. Install dependencies:
+
 ```bash
 npm install
 ```
 
-2. Configure `.env` with owner + Twilio variables.
+1. Configure `.env` with owner + Twilio variables.
 
-3. Run the service:
+2. Run the service:
+
 ```bash
 npm start
 ```
@@ -91,11 +98,13 @@ Service runs at: `http://localhost:4007`
 ## Quick Test (curl)
 
 Health:
+
 ```bash
 curl http://localhost:4007/health
 ```
 
 Notify:
+
 ```bash
 curl -X POST http://localhost:4007/internal/owner-notify ^
   -H "Content-Type: application/json" ^
