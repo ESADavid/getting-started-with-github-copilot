@@ -13,7 +13,20 @@ $env:SENDGRID_FROM = "noreply@example.com"
 $env:PUBLIC_RECORDS_WEBHOOK_SECRET = "testsecret"
 
 $server = Start-Process -FilePath node -ArgumentList "src/index.js" -PassThru
-Start-Sleep -Seconds 3
+
+$healthy = $false
+for ($i = 0; $i -lt 15; $i++) {
+  Start-Sleep -Milliseconds 500
+  try {
+    $healthResp = Invoke-WebRequest -Method GET -Uri "http://127.0.0.1:4012/health" -UseBasicParsing
+    if ([int]$healthResp.StatusCode -eq 200) {
+      $healthy = $true
+      break
+    }
+  } catch {
+    # wait until service is ready
+  }
+}
 
 $results = @()
 
@@ -30,7 +43,7 @@ function Add-Result {
   }
 }
 
-function Run-Test {
+function Invoke-EndpointTest {
   param(
     [string]$Name,
     [string]$Method,
@@ -66,33 +79,39 @@ function Run-Test {
 }
 
 try {
-  Run-Test -Name "health" -Method "GET" -Url "http://127.0.0.1:4012/health"
+  if (-not $healthy) {
+    Add-Result -Name "startup readiness" -Status 0 -Body "ERROR: service did not become healthy on time"
+    $results | ConvertTo-Json -Depth 6
+    return
+  }
 
-  Run-Test -Name "notify invalid channel" -Method "POST" -Url "http://127.0.0.1:4012/internal/owner-notify" -ContentType "application/json" -Body '{"subject":"s","message":"m","channels":["push"]}'
+  Invoke-EndpointTest -Name "health" -Method "GET" -Url "http://127.0.0.1:4012/health"
 
-  Run-Test -Name "notify missing fields" -Method "POST" -Url "http://127.0.0.1:4012/internal/owner-notify" -ContentType "application/json" -Body '{"subject":"","message":"","channels":[]}'
+  Invoke-EndpointTest -Name "notify invalid channel" -Method "POST" -Url "http://127.0.0.1:4012/internal/owner-notify" -ContentType "application/json" -Body '{"subject":"s","message":"m","channels":["push"]}'
 
-  Run-Test -Name "twilio unauthorized sender" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/twilio/sms" -ContentType "application/x-www-form-urlencoded" -Body "From=%2B17040000000&Body=CALL&MessageSid=SM1"
+  Invoke-EndpointTest -Name "notify missing fields" -Method "POST" -Url "http://127.0.0.1:4012/internal/owner-notify" -ContentType "application/json" -Body '{"subject":"","message":"","channels":[]}'
 
-  Run-Test -Name "twilio authorized INFO" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/twilio/sms" -ContentType "application/x-www-form-urlencoded" -Body "From=%2B17042773732&Body=INFO&MessageSid=SM2"
+  Invoke-EndpointTest -Name "twilio unauthorized sender" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/twilio/sms" -ContentType "application/x-www-form-urlencoded" -Body "From=%2B17040000000&Body=CALL&MessageSid=SM1"
 
-  Run-Test -Name "twilio unknown command" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/twilio/sms" -ContentType "application/x-www-form-urlencoded" -Body "From=%2B17042773732&Body=HELLO&MessageSid=SM3"
+  Invoke-EndpointTest -Name "twilio authorized INFO" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/twilio/sms" -ContentType "application/x-www-form-urlencoded" -Body "From=%2B17042773732&Body=INFO&MessageSid=SM2"
 
-  Run-Test -Name "high-priority valid" -Method "POST" -Url "http://127.0.0.1:4012/internal/high-priority-event" -ContentType "application/json" -Body '{"name":"Alex","score":88}'
+  Invoke-EndpointTest -Name "twilio unknown command" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/twilio/sms" -ContentType "application/x-www-form-urlencoded" -Body "From=%2B17042773732&Body=HELLO&MessageSid=SM3"
 
-  Run-Test -Name "high-priority invalid score" -Method "POST" -Url "http://127.0.0.1:4012/internal/high-priority-event" -ContentType "application/json" -Body '{"name":"Alex","score":"bad"}'
+  Invoke-EndpointTest -Name "high-priority valid" -Method "POST" -Url "http://127.0.0.1:4012/internal/high-priority-event" -ContentType "application/json" -Body '{"name":"Alex","score":88}'
 
-  Run-Test -Name "public-records wrong secret" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/public-records/lead" -ContentType "application/json" -Body '{"name":"Dana","email":"dana@example.com","score":90}' -Headers @{ "x-webhook-secret" = "wrong" }
+  Invoke-EndpointTest -Name "high-priority invalid score" -Method "POST" -Url "http://127.0.0.1:4012/internal/high-priority-event" -ContentType "application/json" -Body '{"name":"Alex","score":"bad"}'
 
-  Run-Test -Name "public-records missing name" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/public-records/lead" -ContentType "application/json" -Body '{"email":"dana@example.com","score":90}' -Headers @{ "x-webhook-secret" = "testsecret" }
+  Invoke-EndpointTest -Name "public-records wrong secret" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/public-records/lead" -ContentType "application/json" -Body '{"name":"Dana","email":"dana@example.com","score":90}' -Headers @{ "x-webhook-secret" = "wrong" }
 
-  Run-Test -Name "public-records missing contact" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/public-records/lead" -ContentType "application/json" -Body '{"name":"Dana","score":90}' -Headers @{ "x-webhook-secret" = "testsecret" }
+  Invoke-EndpointTest -Name "public-records missing name" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/public-records/lead" -ContentType "application/json" -Body '{"email":"dana@example.com","score":90}' -Headers @{ "x-webhook-secret" = "testsecret" }
 
-  Run-Test -Name "public-records score79" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/public-records/lead" -ContentType "application/json" -Body '{"name":"Dana","email":"dana@example.com","score":79}' -Headers @{ "x-webhook-secret" = "testsecret" }
+  Invoke-EndpointTest -Name "public-records missing contact" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/public-records/lead" -ContentType "application/json" -Body '{"name":"Dana","score":90}' -Headers @{ "x-webhook-secret" = "testsecret" }
 
-  Run-Test -Name "public-records score80" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/public-records/lead" -ContentType "application/json" -Body '{"name":"Dana","email":"dana@example.com","score":80}' -Headers @{ "x-webhook-secret" = "testsecret" }
+  Invoke-EndpointTest -Name "public-records score79" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/public-records/lead" -ContentType "application/json" -Body '{"name":"Dana","email":"dana@example.com","score":79}' -Headers @{ "x-webhook-secret" = "testsecret" }
 
-  Run-Test -Name "notify sms+email provider fail expected" -Method "POST" -Url "http://127.0.0.1:4012/internal/owner-notify" -ContentType "application/json" -Body '{"subject":"Hot Lead","message":"Lead Dana","channels":["sms","email"]}'
+  Invoke-EndpointTest -Name "public-records score80" -Method "POST" -Url "http://127.0.0.1:4012/webhooks/public-records/lead" -ContentType "application/json" -Body '{"name":"Dana","email":"dana@example.com","score":80}' -Headers @{ "x-webhook-secret" = "testsecret" }
+
+  Invoke-EndpointTest -Name "notify sms+email provider fail expected" -Method "POST" -Url "http://127.0.0.1:4012/internal/owner-notify" -ContentType "application/json" -Body '{"subject":"Hot Lead","message":"Lead Dana","channels":["sms","email"]}'
 
   $results | ConvertTo-Json -Depth 6
 }

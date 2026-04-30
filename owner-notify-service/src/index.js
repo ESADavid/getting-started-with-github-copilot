@@ -23,6 +23,20 @@ function normalizePhone(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
+function canonicalUsPhone(value) {
+  const digits = normalizePhone(value);
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return digits.slice(1);
+  }
+  return digits;
+}
+
+function isOwnerPhone(from, owner) {
+  const normalizedFrom = canonicalUsPhone(from);
+  const normalizedOwner = canonicalUsPhone(owner);
+  return Boolean(normalizedFrom) && Boolean(normalizedOwner) && normalizedFrom === normalizedOwner;
+}
+
 function parseOwnerCommand(body) {
   const text = String(body || "").trim().toUpperCase();
   if (!text) {
@@ -156,7 +170,7 @@ app.post("/webhooks/twilio/sms", (req, res) => {
       .send(buildTwiml("System misconfigured: owner phone is missing."));
   }
 
-  if (from !== owner) {
+  if (!isOwnerPhone(from, owner)) {
     return res
       .status(403)
       .type("text/xml")
@@ -227,23 +241,41 @@ app.post("/webhooks/public-records/lead", async (req, res) => {
 
     await publish("events.lead.captured", lead);
 
+    const warnings = [];
+    let escalated = false;
+    let marketingEmailSent = false;
+
     if (score >= 80) {
-      const { handleHighPriorityEvent } = await import("./highPriorityHandler.js");
-      await handleHighPriorityEvent(lead);
+      try {
+        const { handleHighPriorityEvent } = await import("./highPriorityHandler.js");
+        await handleHighPriorityEvent(lead);
+        escalated = true;
+      } catch (err) {
+        warnings.push("high_priority_escalation_failed");
+        console.error("High-priority escalation warning:", err);
+      }
     }
 
     if (email) {
-      await sendEmail(
-        email,
-        "Thanks for connecting with Equity Shield Advocates",
-        `Hi ${name},\n\nThanks for your interest. Our team is reviewing your request and will follow up shortly.\n\n- Equity Shield Advocates`
-      );
+      try {
+        await sendEmail(
+          email,
+          "Thanks for connecting with Equity Shield Advocates",
+          `Hi ${name},\n\nThanks for your interest. Our team is reviewing your request and will follow up shortly.\n\n- Equity Shield Advocates`
+        );
+        marketingEmailSent = true;
+      } catch (err) {
+        warnings.push("marketing_email_failed");
+        console.error("Marketing email warning:", err);
+      }
     }
 
     return res.status(200).json({
       status: "received",
       source,
-      escalated: score >= 80
+      escalated,
+      marketingEmailSent,
+      warnings
     });
   } catch (err) {
     console.error("Public records webhook error:", err);
